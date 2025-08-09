@@ -2,69 +2,62 @@ name: Update Heathcliff Comic
 
 on:
   schedule:
-    - cron: "0 8 * * *"     # daily 08:00 UTC
+    - cron: "0 8 * * *"      # daily 08:00 UTC
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
 
 jobs:
-  update:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
 
-      - name: Install deps
-        run: pip install requests beautifulsoup4
+      - run: pip install requests beautifulsoup4
 
-      - name: Fetch today's comic
+      - name: Fetch today's comic and build site
         run: |
           python << 'EOF'
           import requests, os
           from bs4 import BeautifulSoup
-
           url = "https://www.gocomics.com/heathcliff"
           r = requests.get(url, timeout=30); r.raise_for_status()
           soup = BeautifulSoup(r.text, "html.parser")
           img = soup.select_one("picture.item-comic-image img") or soup.select_one('img[itemprop="image"]')
-          if not img:
-              raise SystemExit("Comic image not found")
+          if not img: raise SystemExit("Comic image not found")
           img_url = img.get("src") or img.get("data-src") or ""
-          if not img_url.startswith("http"):
-              img_url = "https:" + img_url
+          if not img_url.startswith("http"): img_url = "https:" + img_url
           data = requests.get(img_url, timeout=30).content
-
-          os.makedirs("site", exist_ok=True)
-          open("site/comic.jpg","wb").write(data)
-          open("site/index.html","w").write(
+          os.makedirs("public", exist_ok=True)
+          open("public/comic.jpg","wb").write(data)
+          open("public/index.html","w").write(
             '<!doctype html><meta charset="utf-8"><title>Heathcliff</title>'
             '<img src="comic.jpg" style="width:100%;height:auto">'
           )
           EOF
 
-      - name: Switch to gh-pages (create if missing)
-        run: |
-          if ! git rev-parse --verify gh-pages >/dev/null 2>&1; then
-            git checkout --orphan gh-pages
-            rm -rf *
-            touch .placeholder
-            git add .placeholder
-            git -c user.name="github-actions" -c user.email="github-actions@github.com" commit -m "init gh-pages"
-            git push origin gh-pages
-          fi
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
 
-      - name: Copy files into gh-pages
-        run: |
-          git checkout gh-pages
-          rm -rf * .placeholder
-          cp -r site/* .
-          git add -A
-          git -c user.name="github-actions" -c user.email="github-actions@github.com" commit -m "update comic" || echo "no changes"
-          git push origin gh-pages
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
