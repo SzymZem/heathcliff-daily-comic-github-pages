@@ -1,0 +1,71 @@
+name: Update Heathcliff Comic
+
+on:
+  schedule:
+    - cron: "0 8 * * *" # everyday at 8am utc
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4
+
+      - name: Fetch today's comic
+        run: |
+          python << 'EOF'
+          import requests
+          from bs4 import BeautifulSoup
+
+          url = "https://www.gocomics.com/heathcliff"
+          r = requests.get(url, timeout=30)
+          soup = BeautifulSoup(r.text, "html.parser")
+          img = soup.select_one("picture.item-comic-image img")
+          if not img:
+              raise SystemExit("Comic image not found")
+          img_url = img.get("src") or img.get("data-src")
+          data = requests.get(img_url, timeout=30).content
+
+          # output dir for Pages artifact
+          import os
+          os.makedirs("public", exist_ok=True)
+          with open("public/comic.jpg", "wb") as f:
+            f.write(data)
+
+          # simple index so you can preview in browser
+          with open("public/index.html", "w") as f:
+            f.write('<!doctype html><meta charset="utf-8"><title>Heathcliff</title>'
+                    '<img src="comic.jpg" style="width:100%;height:auto">')
+          EOF
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
