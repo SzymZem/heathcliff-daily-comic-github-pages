@@ -2,54 +2,86 @@ name: Update Heathcliff Comic
 
 on:
   schedule:
-    - cron: "0 8 * * *"
+    - cron: "0 8 * * *"      # Runs daily at 08:00 UTC
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
 
 jobs:
-  update:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
 
       - uses: actions/setup-python@v5
-        with: { python-version: '3.x' }
+        with:
+          python-version: '3.x'
 
       - run: pip install requests beautifulsoup4
 
-      - name: Build site
+      - name: Fetch today's comic and build site
         run: |
           python << 'EOF'
-          import requests, os
+          import os, requests
           from bs4 import BeautifulSoup
-          url = "https://www.gocomics.com/heathcliff"
-          r = requests.get(url, timeout=30); r.raise_for_status()
+
+          BASE = "https://www.creators.com/read/heathcliff"
+          headers = {"User-Agent": "Mozilla/5.0"}
+
+          # Fetch the page
+          r = requests.get(BASE, headers=headers, timeout=30)
+          r.raise_for_status()
           soup = BeautifulSoup(r.text, "html.parser")
-          img = soup.select_one("picture.item-comic-image img") or soup.select_one('img[itemprop="image"]')
-          if not img: raise SystemExit("Comic image not found")
-          img_url = img.get("src") or img.get("data-src") or ""
-          if not img_url.startswith("http"): img_url = "https:" + img_url
-          os.makedirs("site", exist_ok=True)
-          open("site/comic.jpg","wb").write(requests.get(img_url, timeout=30).content)
-          open("site/index.html","w").write('<!doctype html><img src="comic.jpg" style="width:100%;height:auto">')
+
+          # Try to get image URL from <a class="fancybox"> or <img>
+          a = soup.select_one("#comedy-show-banner a.fancybox")
+          img_url = a["href"] if a and a.has_attr("href") else None
+          if not img_url:
+              img = soup.select_one("#comedy-show-banner img")
+              if img and img.has_attr("src"):
+                  img_url = img["src"]
+
+          if not img_url:
+              raise SystemExit("Comic image not found on Creators.com")
+
+          # Download the image
+          img = requests.get(img_url, headers=headers, timeout=30)
+          img.raise_for_status()
+
+          # Prepare output directory
+          out_dir = "public"
+          os.makedirs(out_dir, exist_ok=True)
+
+          # Save comic
+          with open(os.path.join(out_dir, "comic.jpg"), "wb") as f:
+              f.write(img.content)
+
+          # Save simple HTML page for browser preview
+          with open(os.path.join(out_dir, "index.html"), "w") as f:
+              f.write("<!doctype html><meta charset='utf-8'><title>Heathcliff</title>"
+                      "<img src='comic.jpg' style='width:100%;height:auto'>")
+
+          print("Saved", os.path.join(out_dir, "comic.jpg"))
           EOF
 
-      - name: Publish to gh-pages
-        run: |
-          if ! git rev-parse --verify gh-pages >/dev/null 2>&1; then
-            git checkout --orphan gh-pages
-            rm -rf *
-            touch .keep
-            git add .keep
-            git -c user.name="github-actions" -c user.email="github-actions@github.com" commit -m "init"
-            git push origin gh-pages
-          fi
-          git checkout gh-pages
-          rm -rf *
-          cp -r site/* .
-          git add -A
-          git -c user.name="github-actions" -c user.email="github-actions@github.com" commit -m "update comic" || echo "no changes"
-          git push origin gh-pages
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
