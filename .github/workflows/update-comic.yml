@@ -1,0 +1,49 @@
+name: Update Heathcliff Comic
+
+on:
+  schedule:
+    - cron: "0 8 * * *" # everyday at 8am utc
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4
+
+      - name: Download today's comic
+        run: |
+          python << 'EOF'
+          import requests
+          from bs4 import BeautifulSoup
+
+          url = "https://www.gocomics.com/heathcliff"
+          r = requests.get(url)
+          soup = BeautifulSoup(r.text, "html.parser")
+
+          img_tag = soup.select_one("picture.item-comic-image img")
+          if not img_tag:
+              raise Exception("Comic image not found")
+
+          img_url = img_tag["src"]
+          img_data = requests.get(img_url).content
+
+          with open("comic.jpg", "wb") as f:
+              f.write(img_data)
+          EOF
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add comic.jpg
+          git commit -m "Update comic" || echo "No changes to commit"
+          git push
