@@ -4,3 +4,6 @@ View todays comic at [https://szymzem.github.io/heathcliff-daily-comic-github-pa
 
 <br>
 Personal use project for setting the daily Heathcliff comic as the background for my new browser tabs.
+
+## Todays comic:
+![https://szymzem.github.io/heathcliff-daily-comic-github-pages/comic.jpg](https://szymzem.github.io/heathcliff-daily-comic-github-pages/comic.jpg)
